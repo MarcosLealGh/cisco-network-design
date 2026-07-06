@@ -1,0 +1,199 @@
+! ============================================================
+! CISCO 1941 — CORE ROUTER (router-on-a-stick)
+! Diseño de red segmentada por VLANs con OSPF, NAT y ACLs por capa
+!
+! Antes de aplicar en el lab, verificar el cableado físico:
+!   [ ] Gi0/0 = trunk hacia el switch de distribución
+!   [ ] Gi0/1 = WAN hacia el router de borde
+!   [ ] Se0/0/0 = serial hacia el router de sucursal (módulo WIC)
+! ============================================================
+
+! ---- IDENTIFICACIÓN ----
+hostname CORE-1941
+enable secret <SET_STRONG_PASSWORD>
+service password-encryption
+no ip domain-lookup
+
+! ---- USUARIOS Y SSH ----
+username admin privilege 15 secret <SET_STRONG_PASSWORD>
+ip domain-name lab.local
+crypto key generate rsa modulus 2048
+ip ssh version 2
+
+line con 0
+ logging synchronous
+ exec-timeout 30 0
+line vty 0 4
+ login local
+ transport input ssh
+
+! ---- INTERFACE WAN — hacia router de borde ----
+interface GigabitEthernet0/1
+ description WAN_BORDE
+ ip address 10.0.0.2 255.255.255.252
+ ip nat outside
+ no shutdown
+
+! ---- INTERFACE TRUNK — hacia switch de distribución ----
+! router-on-a-stick: una subinterfaz por VLAN, cada una es el gateway de su red
+interface GigabitEthernet0/0
+ description TRUNK_SWD
+ no ip address
+ no shutdown
+
+interface GigabitEthernet0/0.10
+ description VLAN10_Corporativo
+ encapsulation dot1Q 10
+ ip address 192.168.10.1 255.255.255.0
+ ip nat inside
+ ip access-group VLAN10_IN in
+
+interface GigabitEthernet0/0.20
+ description VLAN20_Ventas
+ encapsulation dot1Q 20
+ ip address 192.168.20.1 255.255.255.0
+ ip nat inside
+ ip access-group VLAN20_IN in
+
+interface GigabitEthernet0/0.30
+ description VLAN30_Operaciones_TI
+ encapsulation dot1Q 30
+ ip address 192.168.30.1 255.255.255.0
+ ip nat inside
+
+interface GigabitEthernet0/0.40
+ description VLAN40_Invitados_WiFi
+ encapsulation dot1Q 40
+ ip address 192.168.40.1 255.255.255.0
+ ip nat inside
+ ip access-group VLAN40_IN in
+
+interface GigabitEthernet0/0.50
+ description VLAN50_Servidores
+ encapsulation dot1Q 50
+ ip address 192.168.50.1 255.255.255.0
+ ip nat inside
+ ip access-group VLAN50_IN in
+
+interface GigabitEthernet0/0.99
+ description VLAN99_Management
+ encapsulation dot1Q 99 native
+ ip address 192.168.99.1 255.255.255.0
+ ip nat inside
+
+! ---- INTERFACE SERIAL — hacia router de sucursal ----
+interface Serial0/0/0
+ description WAN_SERIAL_SUCURSAL
+ ip address 172.16.0.1 255.255.255.252
+ clock rate 64000
+ no shutdown
+
+! ---- DHCP POOLS ----
+ip dhcp excluded-address 192.168.10.1 192.168.10.9
+ip dhcp excluded-address 192.168.20.1 192.168.20.9
+ip dhcp excluded-address 192.168.30.1 192.168.30.9
+ip dhcp excluded-address 192.168.40.1 192.168.40.9
+ip dhcp excluded-address 192.168.50.1 192.168.50.20
+ip dhcp excluded-address 192.168.99.1 192.168.99.9
+
+ip dhcp pool VLAN10-Corporativo
+ network 192.168.10.0 255.255.255.0
+ default-router 192.168.10.1
+ dns-server 8.8.8.8
+ lease 1
+
+ip dhcp pool VLAN20-Ventas
+ network 192.168.20.0 255.255.255.0
+ default-router 192.168.20.1
+ dns-server 8.8.8.8
+ lease 1
+
+ip dhcp pool VLAN30-Operaciones
+ network 192.168.30.0 255.255.255.0
+ default-router 192.168.30.1
+ dns-server 8.8.8.8
+ lease 1
+
+ip dhcp pool VLAN40-Invitados
+ network 192.168.40.0 255.255.255.0
+ default-router 192.168.40.1
+ dns-server 8.8.8.8
+ lease 0 4
+
+! ---- ROUTING — default + OSPF ----
+ip route 0.0.0.0 0.0.0.0 10.0.0.1
+
+router ospf 1
+ router-id 1.1.1.1
+ network 172.16.0.0 0.0.0.3 area 0
+ network 192.168.10.0 0.0.0.255 area 0
+ network 192.168.20.0 0.0.0.255 area 0
+ network 192.168.30.0 0.0.0.255 area 0
+ network 192.168.40.0 0.0.0.255 area 0
+ network 192.168.50.0 0.0.0.255 area 0
+ network 192.168.99.0 0.0.0.255 area 0
+ default-information originate
+
+! ---- NAT (PAT / overload) ----
+ip nat inside source list NAT_INSIDE interface GigabitEthernet0/1 overload
+
+ip access-list standard NAT_INSIDE
+ permit 192.168.10.0 0.0.0.255
+ permit 192.168.20.0 0.0.0.255
+ permit 192.168.30.0 0.0.0.255
+ permit 192.168.40.0 0.0.0.255
+ permit 192.168.99.0 0.0.0.255
+ permit 192.168.100.0 0.0.0.255
+
+! ---- DNS ----
+ip name-server 8.8.8.8
+ip name-server 1.1.1.1
+
+! ---- ACLs DE CONTROL DE ACCESO ----
+! IMPORTANTE: las líneas PERMIT deben ir ANTES de los DENY (Cisco evalúa en orden)
+! El servidor .50.10 corre un helpdesk (HTTPS 443); el .50.11 un SIEM (syslog 1514)
+
+! VLAN 10 — Corporativo: solo helpdesk y SIEM, no el resto de servidores
+ip access-list extended VLAN10_IN
+ permit tcp 192.168.10.0 0.0.0.255 host 192.168.50.10 eq 443
+ permit tcp 192.168.10.0 0.0.0.255 host 192.168.50.11 eq 1514
+ permit udp 192.168.10.0 0.0.0.255 host 192.168.50.11 eq 1514
+ deny   ip  192.168.10.0 0.0.0.255 192.168.50.0 0.0.0.255
+ deny   ip  192.168.10.0 0.0.0.255 192.168.99.0 0.0.0.255
+ permit ip  any any
+
+! VLAN 20 — Ventas: mismas excepciones que VLAN 10
+ip access-list extended VLAN20_IN
+ permit tcp 192.168.20.0 0.0.0.255 host 192.168.50.10 eq 443
+ permit tcp 192.168.20.0 0.0.0.255 host 192.168.50.11 eq 1514
+ permit udp 192.168.20.0 0.0.0.255 host 192.168.50.11 eq 1514
+ deny   ip  192.168.20.0 0.0.0.255 192.168.50.0 0.0.0.255
+ deny   ip  192.168.20.0 0.0.0.255 192.168.99.0 0.0.0.255
+ permit ip  any any
+
+! VLAN 50 — Servidores: acceso a red interna permitido, internet denegado
+ip access-list extended VLAN50_IN
+ permit ip 192.168.50.0 0.0.0.255 192.168.10.0 0.0.0.255
+ permit ip 192.168.50.0 0.0.0.255 192.168.20.0 0.0.0.255
+ permit ip 192.168.50.0 0.0.0.255 192.168.30.0 0.0.0.255
+ permit ip 192.168.50.0 0.0.0.255 192.168.99.0 0.0.0.255
+ deny   ip 192.168.50.0 0.0.0.255 any
+ permit ip any any
+
+! VLAN 40 — Invitados WiFi: solo internet, sin acceso a red interna
+ip access-list extended VLAN40_IN
+ deny ip 192.168.40.0 0.0.0.255 192.168.10.0 0.0.0.255
+ deny ip 192.168.40.0 0.0.0.255 192.168.20.0 0.0.0.255
+ deny ip 192.168.40.0 0.0.0.255 192.168.30.0 0.0.0.255
+ deny ip 192.168.40.0 0.0.0.255 192.168.50.0 0.0.0.255
+ deny ip 192.168.40.0 0.0.0.255 192.168.99.0 0.0.0.255
+ deny ip 192.168.40.0 0.0.0.255 172.16.0.0 0.0.0.3
+ deny ip 192.168.40.0 0.0.0.255 10.0.0.0 0.0.0.3
+ permit ip any any
+
+! ---- SEGURIDAD ----
+no ip http server
+no ip http secure-server
+
+! ---- FIN DE CONFIGURACIÓN ----
+end

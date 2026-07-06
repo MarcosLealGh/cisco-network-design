@@ -1,0 +1,92 @@
+! ============================================================
+! CISCO 2960 — SW-A1 (ACCESO — VLAN 10 Corporativo + VLAN 20 Ventas)
+! Puertos de acceso con port-security, PortFast y BPDU Guard
+!
+! Antes de aplicar en el lab, verificar el cableado físico:
+!   [ ] Fa0/1 = uplink trunk hacia SW-D (Fa0/1)
+!   [ ] Fa0/2-Fa0/10 = hosts VLAN 10 (ajustar rango según equipos reales)
+!   [ ] Fa0/11-Fa0/20 = hosts VLAN 20 (ajustar rango según equipos reales)
+!   [ ] Fa0/21-Fa0/24 = sin uso
+! ============================================================
+
+! ---- IDENTIFICACIÓN ----
+hostname SW-A1-ACCESO
+enable secret <SET_STRONG_PASSWORD>
+service password-encryption
+no ip domain-lookup
+username admin privilege 15 secret <SET_STRONG_PASSWORD>
+
+line con 0
+ logging synchronous
+ exec-timeout 30 0
+line vty 0 4
+ login local
+ transport input ssh
+
+! ---- VLANs ----
+vlan 10
+ name Corporativo
+vlan 20
+ name Ventas
+vlan 99
+ name Management
+vlan 999
+ name UNUSED
+
+! ---- SPANNING TREE ----
+spanning-tree mode rapid-pvst
+
+! ---- UPLINK TRUNK HACIA SW-D ----
+interface FastEthernet0/1
+ description UPLINK_SWD
+ switchport mode trunk
+ switchport trunk native vlan 99
+ switchport trunk allowed vlan 10,20,99
+ switchport nonegotiate
+ no shutdown
+
+! ---- ACCESO VLAN 10 — Corporativo ----
+interface range FastEthernet0/2 - FastEthernet0/10
+ description ACCESS_VLAN10_Corporativo
+ switchport mode access
+ switchport access vlan 10
+ spanning-tree portfast
+ spanning-tree bpduguard enable
+ switchport port-security maximum 1
+ switchport port-security violation restrict
+ switchport port-security
+ no shutdown
+
+! ---- ACCESO VLAN 20 — Ventas ----
+interface range FastEthernet0/11 - FastEthernet0/20
+ description ACCESS_VLAN20_Ventas
+ switchport mode access
+ switchport access vlan 20
+ spanning-tree portfast
+ spanning-tree bpduguard enable
+ switchport port-security maximum 1
+ switchport port-security violation restrict
+ switchport port-security
+ no shutdown
+
+! ---- PUERTOS SIN USO ----
+interface range FastEthernet0/21 - FastEthernet0/24
+ description UNUSED
+ switchport mode access
+ switchport access vlan 999
+ shutdown
+
+interface range GigabitEthernet0/1 - GigabitEthernet0/2
+ description UNUSED
+ shutdown
+
+! ---- MANAGEMENT — SVI VLAN 99 ----
+interface Vlan99
+ description MANAGEMENT
+ ip address 192.168.99.3 255.255.255.0
+ no shutdown
+
+ip default-gateway 192.168.99.1
+
+! ---- FIN DE CONFIGURACIÓN ----
+end

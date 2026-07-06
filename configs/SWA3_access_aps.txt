@@ -1,0 +1,106 @@
+! ============================================================
+! CISCO 2960 — SW-A3 (ACCESO — Access Points WiFi)
+! VLANs: 10 Corporativo + 40 Invitados WiFi
+! Puertos en trunk hacia APs multi-SSID
+!
+! Antes de aplicar en el lab, verificar el cableado físico:
+!   [ ] Fa0/1 = uplink trunk hacia SW-D (Fa0/3)
+!   [ ] Fa0/2-Fa0/4 = trunk hacia cada AP (máx 3 APs)
+!       Los APs necesitan trunk porque manejan 2 SSIDs en VLANs distintas:
+!       - SSID "Corporativo" -> VLAN 10
+!       - SSID "Invitados"   -> VLAN 40
+!       - Management del AP   -> VLAN 99 (native, untagged)
+!   [ ] Fa0/5-Fa0/24 = sin uso
+! ============================================================
+
+! ---- IDENTIFICACIÓN ----
+hostname SW-A3-APs
+enable secret <SET_STRONG_PASSWORD>
+service password-encryption
+no ip domain-lookup
+username admin privilege 15 secret <SET_STRONG_PASSWORD>
+
+line con 0
+ logging synchronous
+ exec-timeout 30 0
+line vty 0 4
+ login local
+ transport input ssh
+
+! ---- VLANs ----
+vlan 10
+ name Corporativo
+vlan 40
+ name Invitados-WiFi
+vlan 99
+ name Management
+vlan 999
+ name UNUSED
+
+! ---- SPANNING TREE ----
+spanning-tree mode rapid-pvst
+
+! ---- UPLINK TRUNK HACIA SW-D ----
+interface FastEthernet0/1
+ description UPLINK_SWD
+ switchport mode trunk
+ switchport trunk native vlan 99
+ switchport trunk allowed vlan 10,40,99
+ switchport nonegotiate
+ no shutdown
+
+! ---- TRUNK HACIA APs ----
+! El AP recibe las VLANs taggeadas para separar SSIDs.
+! VLAN 99 como native permite la adopción del AP por su controlador sin tag.
+! portfast trunk + bpduguard: el AP no participa en STP, pero protegemos el puerto.
+interface FastEthernet0/2
+ description TRUNK_AP1
+ switchport mode trunk
+ switchport trunk native vlan 99
+ switchport trunk allowed vlan 10,40,99
+ switchport nonegotiate
+ spanning-tree portfast trunk
+ spanning-tree bpduguard enable
+ no shutdown
+
+interface FastEthernet0/3
+ description TRUNK_AP2
+ switchport mode trunk
+ switchport trunk native vlan 99
+ switchport trunk allowed vlan 10,40,99
+ switchport nonegotiate
+ spanning-tree portfast trunk
+ spanning-tree bpduguard enable
+ no shutdown
+
+interface FastEthernet0/4
+ description TRUNK_AP3
+ switchport mode trunk
+ switchport trunk native vlan 99
+ switchport trunk allowed vlan 10,40,99
+ switchport nonegotiate
+ spanning-tree portfast trunk
+ spanning-tree bpduguard enable
+ no shutdown
+
+! ---- PUERTOS SIN USO ----
+interface range FastEthernet0/5 - FastEthernet0/24
+ description UNUSED
+ switchport mode access
+ switchport access vlan 999
+ shutdown
+
+interface range GigabitEthernet0/1 - GigabitEthernet0/2
+ description UNUSED
+ shutdown
+
+! ---- MANAGEMENT — SVI VLAN 99 ----
+interface Vlan99
+ description MANAGEMENT
+ ip address 192.168.99.5 255.255.255.0
+ no shutdown
+
+ip default-gateway 192.168.99.1
+
+! ---- FIN DE CONFIGURACIÓN ----
+end

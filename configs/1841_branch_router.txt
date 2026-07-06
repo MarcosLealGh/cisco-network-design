@@ -1,0 +1,63 @@
+! ============================================================
+! CISCO 1841 — ROUTER DE SUCURSAL
+! Conectado al core por enlace serial; OSPF en área 0
+!
+! Antes de aplicar en el lab, verificar el cableado físico:
+!   [ ] Se0/0/0 = serial hacia el core (módulo WIC)
+!   [ ] Fa0/0 = LAN de la sucursal
+!   [ ] El core es DCE (pone clock rate) — este router es DTE (sin clock rate)
+! ============================================================
+
+! ---- IDENTIFICACIÓN ----
+hostname SUCURSAL-1841
+enable secret <SET_STRONG_PASSWORD>
+service password-encryption
+no ip domain-lookup
+
+! ---- USUARIOS Y SSH ----
+username admin privilege 15 secret <SET_STRONG_PASSWORD>
+ip domain-name lab.local
+crypto key generate rsa modulus 2048
+ip ssh version 2
+
+line con 0
+ logging synchronous
+ exec-timeout 30 0
+line vty 0 4
+ login local
+ transport input ssh
+
+! ---- INTERFACE SERIAL — hacia el core ----
+! Este router es DTE — NO configurar clock rate aquí
+interface Serial0/0/0
+ description WAN_SERIAL_CORE
+ ip address 172.16.0.2 255.255.255.252
+ no shutdown
+
+! ---- INTERFACE LAN — red de sucursal ----
+interface FastEthernet0/0
+ description LAN_SUCURSAL
+ ip address 192.168.100.1 255.255.255.0
+ no shutdown
+
+interface FastEthernet0/1
+ description UNUSED
+ shutdown
+
+! ---- DHCP POOL — sucursal ----
+ip dhcp excluded-address 192.168.100.1 192.168.100.9
+
+ip dhcp pool SUCURSAL-LAN
+ network 192.168.100.0 255.255.255.0
+ default-router 192.168.100.1
+ dns-server 8.8.8.8
+ lease 1
+
+! ---- ROUTING — OSPF ----
+router ospf 1
+ router-id 2.2.2.2
+ network 172.16.0.0 0.0.0.3 area 0
+ network 192.168.100.0 0.0.0.255 area 0
+
+! ---- FIN DE CONFIGURACIÓN ----
+end
